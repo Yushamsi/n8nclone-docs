@@ -15,7 +15,6 @@ import { STORES } from '@n8n/stores';
 import type {
 	IExecutionPushResponse,
 	IExecutionResponse,
-	IExecutionsListResponse,
 	INewWorkflowData,
 	INodeMetadata,
 	INodeUi,
@@ -79,7 +78,6 @@ import { getPairedItemsMapping } from '@/utils/pairedItemUtils';
 import { isJsonKeyObject, isEmpty, stringSizeInBytes, isPresent } from '@/utils/typesUtils';
 import { makeRestApiRequest, ResponseError } from '@n8n/rest-api-client';
 import { unflattenExecutionData } from '@/utils/executionUtils';
-import { useNDVStore } from '@/stores/ndv.store';
 import { useNodeTypesStore } from '@/stores/nodeTypes.store';
 import { getCredentialOnlyNodeTypeName } from '@/utils/credentialOnlyNodes';
 import { i18n } from '@n8n/i18n';
@@ -195,10 +193,6 @@ export const useWorkflowsStore = defineStore(STORES.WORKFLOWS, () => {
 		}),
 	);
 
-	const currentWorkflowHasWebhookNode = computed(
-		() => !!workflow.value.nodes.find((node: INodeUi) => !!node.webhookId),
-	);
-
 	const getWorkflowRunData = computed<IRunData | null>(() => {
 		if (!workflowExecutionData.value?.data?.resultData) {
 			return null;
@@ -219,26 +213,6 @@ export const useWorkflowsStore = defineStore(STORES.WORKFLOWS, () => {
 			node.disabled !== true
 		);
 	};
-
-	const isWaitingExecution = computed(() => {
-		const activeNode = useNDVStore().activeNode;
-
-		if (activeNode) {
-			if (willNodeWait(activeNode)) return true;
-
-			const workflow = getCurrentWorkflow();
-			const parentNodes = workflow.getParentNodes(activeNode.name);
-
-			for (const parentNode of parentNodes) {
-				if (willNodeWait(workflow.nodes[parentNode])) {
-					return true;
-				}
-			}
-
-			return false;
-		}
-		return allNodes.value.some((node) => willNodeWait(node));
-	});
 
 	const isWorkflowRunning = computed(() => {
 		if (activeExecutionId.value === null) {
@@ -282,12 +256,6 @@ export const useWorkflowsStore = defineStore(STORES.WORKFLOWS, () => {
 	});
 
 	const executedNode = computed(() => workflowExecutionData.value?.executedNode);
-
-	const getAllLoadedFinishedExecutions = computed(() => {
-		return currentWorkflowExecutions.value.filter(
-			(ex) => ex.finished === true || ex.stoppedAt !== undefined,
-		);
-	});
 
 	const getWorkflowExecution = computed(() => workflowExecutionData.value);
 
@@ -424,10 +392,6 @@ export const useWorkflowsStore = defineStore(STORES.WORKFLOWS, () => {
 
 	function isNodePristine(nodeName: string): boolean {
 		return nodeMetadata.value[nodeName] === undefined || nodeMetadata.value[nodeName].pristine;
-	}
-
-	function getExecutionDataById(id: string): ExecutionSummary | undefined {
-		return currentWorkflowExecutions.value.find((execution) => execution.id === id);
 	}
 
 	function getPinDataSize(pinData: Record<string, string | INodeExecutionData[]> = {}): number {
@@ -1643,31 +1607,6 @@ export const useWorkflowsStore = defineStore(STORES.WORKFLOWS, () => {
 		return workflow.value.pinData[nodeName].map((item) => item.json) as INodeExecutionData[];
 	}
 
-	function activeNode(): INodeUi | null {
-		// kept here for FE hooks
-		const ndvStore = useNDVStore();
-		return ndvStore.activeNode;
-	}
-
-	// TODO: For sure needs some kind of default filter like last day, with max 10 results, ...
-	async function getPastExecutions(
-		filter: IDataObject,
-		limit: number,
-		lastId?: string,
-		firstId?: string,
-	): Promise<IExecutionsListResponse> {
-		let sendData = {};
-		if (filter) {
-			sendData = {
-				filter,
-				firstId,
-				lastId,
-				limit,
-			};
-		}
-		return await makeRestApiRequest(rootStore.restApiContext, 'GET', '/executions', sendData);
-	}
-
 	async function getExecution(id: string): Promise<IExecutionResponse | undefined> {
 		const response = await makeRestApiRequest<IExecutionFlattedResponse | undefined>(
 			rootStore.restApiContext,
@@ -1780,15 +1719,6 @@ export const useWorkflowsStore = defineStore(STORES.WORKFLOWS, () => {
 
 	function deleteExecution(execution: ExecutionSummary): void {
 		currentWorkflowExecutions.value.splice(currentWorkflowExecutions.value.indexOf(execution), 1);
-	}
-
-	function addToCurrentExecutions(executions: ExecutionSummary[]): void {
-		executions.forEach((execution) => {
-			const exists = currentWorkflowExecutions.value.find((ex) => ex.id === execution.id);
-			if (!exists && execution.workflowId === workflowId.value) {
-				currentWorkflowExecutions.value.push(execution);
-			}
-		});
 	}
 
 	function getBinaryUrl(
@@ -1949,12 +1879,10 @@ export const useWorkflowsStore = defineStore(STORES.WORKFLOWS, () => {
 		isNewWorkflow,
 		isWorkflowActive,
 		workflowTriggerNodes,
-		currentWorkflowHasWebhookNode,
 		getWorkflowRunData,
 		getWorkflowResultDataByNodeName,
 		allConnections,
 		allNodes,
-		isWaitingExecution,
 		isWorkflowRunning,
 		canvasNames,
 		nodesByName,
@@ -1962,7 +1890,6 @@ export const useWorkflowsStore = defineStore(STORES.WORKFLOWS, () => {
 		pinnedWorkflowData,
 		shouldReplaceInputDataWithPinData,
 		executedNode,
-		getAllLoadedFinishedExecutions,
 		getWorkflowExecution,
 		getPastChatMessages,
 		selectedTriggerNodeName: computed(() => selectedTriggerNodeName.value),
@@ -1980,7 +1907,6 @@ export const useWorkflowsStore = defineStore(STORES.WORKFLOWS, () => {
 		getPinnedDataLastRemovedAt,
 		isNodePristine,
 		isNodeExecuting,
-		getExecutionDataById,
 		getPinDataSize,
 		getNodeTypes,
 		getNodes,
@@ -2047,8 +1973,6 @@ export const useWorkflowsStore = defineStore(STORES.WORKFLOWS, () => {
 		updateNodeExecutionData,
 		clearNodeExecutionData,
 		pinDataByNodeName,
-		activeNode,
-		getPastExecutions,
 		getExecution,
 		createNewWorkflow,
 		updateWorkflow,
@@ -2056,7 +1980,6 @@ export const useWorkflowsStore = defineStore(STORES.WORKFLOWS, () => {
 		removeTestWebhook,
 		fetchExecutionDataById,
 		deleteExecution,
-		addToCurrentExecutions,
 		getBinaryUrl,
 		setNodePristine,
 		resetChatMessages,
