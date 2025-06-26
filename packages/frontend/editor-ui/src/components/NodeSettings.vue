@@ -26,10 +26,8 @@ import type {
 
 import { COMMUNITY_NODES_INSTALLATION_DOCS_URL, CUSTOM_NODES_DOCS_URL } from '@/constants';
 
-import NodeTitle from '@/components/NodeTitle.vue';
 import ParameterInputList from '@/components/ParameterInputList.vue';
 import NodeCredentials from '@/components/NodeCredentials.vue';
-import NodeSettingsTabs from '@/components/NodeSettingsTabs.vue';
 import NodeWebhooks from '@/components/NodeWebhooks.vue';
 import NDVSubConnections from '@/components/NDVSubConnections.vue';
 import get from 'lodash/get';
@@ -54,7 +52,9 @@ import { ProjectTypes } from '@/types/projects.types';
 import { updateDynamicConnections } from '@/utils/nodeSettingsUtils';
 import FreeAiCreditsCallout from '@/components/FreeAiCreditsCallout.vue';
 import { useCanvasOperations } from '@/composables/useCanvasOperations';
-import { N8nIconButton } from '@n8n/design-system';
+import { shouldShowParameter } from './canvas/experimental/experimentalNdv.utils';
+import { useTemplateRef } from 'vue';
+import { useResizeObserver } from '@vueuse/core';
 
 const props = withDefaults(
 	defineProps<{
@@ -68,8 +68,7 @@ const props = withDefaults(
 		executable: boolean;
 		inputSize: number;
 		activeNode?: INodeUi;
-		canExpand?: boolean;
-		hideConnections?: boolean;
+		isEmbeddedInCanvas?: boolean;
 	}>(),
 	{
 		foreignCredentials: () => [],
@@ -78,8 +77,7 @@ const props = withDefaults(
 		inputSize: 0,
 		blockUI: false,
 		activeNode: undefined,
-		canExpand: false,
-		hideConnections: false,
+		isEmbeddedInCanvas: false,
 	},
 );
 
@@ -91,8 +89,9 @@ const emit = defineEmits<{
 	openConnectionNodeCreator: [nodeName: string, connectionType: NodeConnectionType];
 	activate: [];
 	execute: [];
-	expand: [];
 }>();
+
+const slots = defineSlots<{ actions?: {} }>();
 
 const nodeTypesStore = useNodeTypesStore();
 const ndvStore = useNDVStore();
@@ -105,6 +104,15 @@ const nodeHelpers = useNodeHelpers();
 const externalHooks = useExternalHooks();
 const i18n = useI18n();
 const canvasOperations = useCanvasOperations();
+
+const nodeParameterWrapper = useTemplateRef('nodeParameterWrapper');
+const hasOverflowY = ref(false);
+
+useResizeObserver(nodeParameterWrapper, () => {
+	hasOverflowY.value =
+		(nodeParameterWrapper.value?.scrollHeight ?? 0) >
+		(nodeParameterWrapper.value?.offsetHeight ?? 0);
+});
 
 const nodeValid = ref(true);
 const openPanel = ref<'params' | 'settings'>('params');
@@ -216,10 +224,12 @@ const parameters = computed(() => {
 
 const parametersSetting = computed(() => parameters.value.filter((item) => item.isNodeSetting));
 
-const parametersNoneSetting = computed(() =>
+const parametersNoneSetting = computed(() => {
 	// The connection hint notice is visually hidden via CSS in NodeDetails.vue when the node has output connections
-	parameters.value.filter((item) => !item.isNodeSetting),
-);
+	const paramsToShow = parameters.value.filter((item) => !item.isNodeSetting);
+
+	return props.isEmbeddedInCanvas ? parameters.value.filter(shouldShowParameter) : paramsToShow;
+});
 
 const isDisplayingCredentials = computed(
 	() =>
@@ -1027,8 +1037,8 @@ function displayCredentials(credentialTypeDescription: INodeCredentialDescriptio
 					:node-type="nodeType"
 					:read-only="isReadOnly"
 					@update:model-value="nameChanged"
-				></NodeTitle>
-				<div v-if="isExecutable || props.canExpand" :class="$style.headerActions">
+				/>
+				<template v-if="isExecutable || slots.actions">
 					<NodeExecuteButton
 						v-if="isExecutable && !blockUI && node && nodeValid"
 						data-test-id="node-execute-button"
@@ -1041,17 +1051,8 @@ function displayCredentials(credentialTypeDescription: INodeCredentialDescriptio
 						@stop-execution="onStopExecution"
 						@value-changed="valueChanged"
 					/>
-					<N8nIconButton
-						v-if="props.canExpand"
-						icon="expand"
-						type="secondary"
-						text
-						size="mini"
-						icon-size="large"
-						aria-label="Expand"
-						@click="emit('expand')"
-					/>
-				</div>
+					<slot name="actions" />
+				</template>
 			</div>
 			<NodeSettingsTabs
 				v-if="node && nodeValid"
@@ -1103,7 +1104,12 @@ function displayCredentials(credentialTypeDescription: INodeCredentialDescriptio
 				</template>
 			</i18n-t>
 		</div>
-		<div v-if="node && nodeValid" class="node-parameters-wrapper" data-test-id="node-parameters">
+		<div
+			v-if="node && nodeValid"
+			ref="nodeParameterWrapper"
+			:class="['node-parameters-wrapper', hasOverflowY ? 'nowheel' : '']"
+			data-test-id="node-parameters"
+		>
 			<n8n-notice
 				v-if="hasForeignCredential && !isHomeProjectTeam"
 				:content="
@@ -1129,6 +1135,7 @@ function displayCredentials(credentialTypeDescription: INodeCredentialDescriptio
 					@parameter-blur="onParameterBlur"
 				>
 					<NodeCredentials
+						v-if="!isEmbeddedInCanvas"
 						:node="node"
 						:readonly="isReadOnly"
 						:show-all="true"
@@ -1193,7 +1200,7 @@ function displayCredentials(credentialTypeDescription: INodeCredentialDescriptio
 			</div>
 		</div>
 		<NDVSubConnections
-			v-if="node && !props.hideConnections"
+			v-if="node && !props.isEmbeddedInCanvas"
 			ref="subConnections"
 			:root-node="node"
 			@switch-selected-node="onSwitchSelectedNode"
@@ -1206,12 +1213,6 @@ function displayCredentials(credentialTypeDescription: INodeCredentialDescriptio
 <style lang="scss" module>
 .header {
 	background-color: var(--color-background-base);
-}
-
-.headerActions {
-	display: flex;
-	gap: var(--spacing-4xs);
-	align-items: center;
 }
 
 .warningIcon {

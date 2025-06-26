@@ -21,6 +21,7 @@ import { useActions } from './NodeCreator/composables/useActions';
 import { useThrottleFn } from '@vueuse/core';
 import KeyboardShortcutTooltip from '@/components/KeyboardShortcutTooltip.vue';
 import { useI18n } from '@n8n/i18n';
+import { useExperimentalNdvStore } from '../canvas/experimental/experimentalNdv.store';
 
 type Props = {
 	nodeViewScale: number;
@@ -45,6 +46,7 @@ const uiStore = useUIStore();
 const focusPanelStore = useFocusPanelStore();
 const posthogStore = usePostHog();
 const i18n = useI18n();
+const experimentalNdvStore = useExperimentalNdvStore();
 
 const { getAddedNodesAndConnections } = useActions();
 
@@ -135,16 +137,31 @@ onBeforeUnmount(() => {
 			</KeyboardShortcutTooltip>
 			<div
 				:class="[$style.addStickyButton, isStickyNotesButtonVisible ? $style.visibleButton : '']"
-				data-test-id="add-sticky-button"
-				@click="addStickyNote"
 			>
 				<KeyboardShortcutTooltip
 					:label="i18n.baseText('nodeView.addStickyHint')"
 					:shortcut="{ keys: ['s'], shiftKey: true }"
 					placement="left"
 				>
-					<n8n-icon-button type="tertiary" :icon="['far', 'note-sticky']" />
+					<n8n-icon-button
+						type="tertiary"
+						:icon="['far', 'note-sticky']"
+						data-test-id="add-sticky-button"
+						@click="addStickyNote"
+					/>
 				</KeyboardShortcutTooltip>
+				<n8n-icon-button
+					v-if="experimentalNdvStore.isEnabled"
+					type="tertiary"
+					icon="expand"
+					@click="experimentalNdvStore.expandAllNodes"
+				/>
+				<n8n-icon-button
+					v-if="experimentalNdvStore.isEnabled"
+					type="tertiary"
+					icon="compress"
+					@click="experimentalNdvStore.collapseAllNodes"
+				/>
 			</div>
 			<KeyboardShortcutTooltip
 				v-if="isOpenFocusPanelButtonVisible"
@@ -183,6 +200,10 @@ onBeforeUnmount(() => {
 	opacity: 0;
 	transition: 0.1s;
 	transition-timing-function: linear;
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-3xs);
+	align-items: center;
 }
 
 .visibleButton {
