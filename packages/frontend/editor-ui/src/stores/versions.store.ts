@@ -1,9 +1,15 @@
 import type { IVersionNotificationSettings } from '@n8n/api-types';
 import * as versionsApi from '@n8n/rest-api-client/api/versions';
-import { LOCAL_STORAGE_READ_WHATS_NEW_ARTICLES, VERSIONS_MODAL_KEY } from '@/constants';
+import {
+	LOCAL_STORAGE_DISMISSED_WHATS_NEW_CALLOUT,
+	LOCAL_STORAGE_READ_WHATS_NEW_ARTICLES,
+	VERSIONS_MODAL_KEY,
+	WHATS_NEW_MODAL_KEY,
+} from '@/constants';
 import { STORES } from '@n8n/stores';
-import type { Version, WhatsNewArticle } from '@n8n/rest-api-client/api/versions';
+import type { Version, WhatsNewSection } from '@n8n/rest-api-client/api/versions';
 import { defineStore } from 'pinia';
+import type { NotificationHandle } from 'element-plus';
 import { useRootStore } from '@n8n/stores/useRootStore';
 import { useToast } from '@/composables/useToast';
 import { useUIStore } from '@/stores/ui.store';
@@ -24,12 +30,21 @@ export const useVersionsStore = defineStore(STORES.VERSIONS, () => {
 	});
 	const nextVersions = ref<Version[]>([]);
 	const currentVersion = ref<Version | undefined>();
-	const whatsNewArticles = ref<WhatsNewArticle[]>([]);
+	const whatsNew = ref<WhatsNewSection>({
+		title: '',
+		createdAt: new Date().toISOString(),
+		updatedAt: null,
+		calloutText: '',
+		footer: '',
+		items: [],
+	});
+	const whatsNewCallout = ref<NotificationHandle | undefined>();
 
-	const { showToast } = useToast();
+	const { showToast, showMessage } = useToast();
 	const uiStore = useUIStore();
 	const settingsStore = useSettingsStore();
 	const readWhatsNewArticlesStorage = useStorage(LOCAL_STORAGE_READ_WHATS_NEW_ARTICLES);
+	const lastDismissedWhatsNewCalloutStorage = useStorage(LOCAL_STORAGE_DISMISSED_WHATS_NEW_CALLOUT);
 
 	// ---------------------------------------------------------------------------
 	// #region Computed
@@ -57,6 +72,16 @@ export const useVersionsStore = defineStore(STORES.VERSIONS, () => {
 			: [];
 	});
 
+	const lastDismissedWhatsNewCallout = computed((): number[] => {
+		return lastDismissedWhatsNewCalloutStorage.value
+			? jsonParse(lastDismissedWhatsNewCalloutStorage.value, { fallbackValue: [] })
+			: [];
+	});
+
+	const whatsNewArticles = computed(() => {
+		return whatsNew.value.items;
+	});
+
 	// #endregion
 
 	// ---------------------------------------------------------------------------
@@ -81,25 +106,8 @@ export const useVersionsStore = defineStore(STORES.VERSIONS, () => {
 		currentVersion.value = params.versions.find((v) => v.name === params.currentVersion);
 	};
 
-	const setWhatsNew = (article: WhatsNewArticle[]) => {
-		whatsNewArticles.value = article;
-	};
-
-	const fetchWhatsNew = async () => {
-		try {
-			const { enabled, whatsNewEnabled, whatsNewEndpoint } = versionNotificationSettings.value;
-			if (enabled && whatsNewEnabled && whatsNewEndpoint) {
-				const rootStore = useRootStore();
-				const current = rootStore.versionCli;
-				const instanceId = rootStore.instanceId;
-				const articles = await versionsApi.getWhatsNewArticles(
-					whatsNewEndpoint,
-					current,
-					instanceId,
-				);
-				setWhatsNew(articles);
-			}
-		} catch (e) {}
+	const setWhatsNew = (section: WhatsNewSection) => {
+		whatsNew.value = section;
 	};
 
 	const setWhatsNewArticleRead = (articleId: number) => {
@@ -113,6 +121,58 @@ export const useVersionsStore = defineStore(STORES.VERSIONS, () => {
 
 	const isWhatsNewArticleRead = (articleId: number): boolean => {
 		return readWhatsNewArticles.value.includes(articleId);
+	};
+
+	const closeWhatsNewCallout = () => {
+		whatsNewCallout.value?.close();
+		whatsNewCallout.value = undefined;
+	};
+
+	const dismissWhatsNewCallout = () => {
+		lastDismissedWhatsNewCalloutStorage.value = JSON.stringify(
+			whatsNewArticles.value.map((item) => item.id),
+		);
+	};
+
+	const shouldShowWhatsNewCallout = (): boolean => {
+		return !whatsNewArticles.value.every((item) =>
+			lastDismissedWhatsNewCallout.value.includes(item.id),
+		);
+	};
+
+	const fetchWhatsNew = async () => {
+		try {
+			const { enabled, whatsNewEnabled, whatsNewEndpoint } = versionNotificationSettings.value;
+			if (enabled && whatsNewEnabled && whatsNewEndpoint) {
+				const rootStore = useRootStore();
+				const current = rootStore.versionCli;
+				const instanceId = rootStore.instanceId;
+				const section = await versionsApi.getWhatsNewSection(whatsNewEndpoint, current, instanceId);
+
+				if (section.items?.length > 0) {
+					setWhatsNew(section);
+
+					if (shouldShowWhatsNewCallout()) {
+						whatsNewCallout.value = showMessage({
+							title: whatsNew.value.title,
+							message: whatsNew.value.calloutText,
+							duration: 0,
+							position: 'bottom-left',
+							customClass: 'clickable whats-new-notification',
+							onClick: () => {
+								uiStore.openModalWithData({
+									name: WHATS_NEW_MODAL_KEY,
+									data: { articleId: whatsNew.value.items[0]?.id ?? 0 },
+								});
+							},
+							onClose: () => {
+								dismissWhatsNewCallout();
+							},
+						});
+					}
+				}
+			}
+		} catch (e) {}
 	};
 
 	const initialize = (settings: IVersionNotificationSettings) => {
@@ -167,8 +227,10 @@ export const useVersionsStore = defineStore(STORES.VERSIONS, () => {
 		initialize,
 		checkForNewVersions,
 		fetchWhatsNew,
+		whatsNew,
 		whatsNewArticles,
 		isWhatsNewArticleRead,
 		setWhatsNewArticleRead,
+		closeWhatsNewCallout,
 	};
 });
