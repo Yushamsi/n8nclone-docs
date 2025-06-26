@@ -838,6 +838,7 @@ router.beforeEach(async (to: RouteLocationNormalized, from, next) => {
 			console.error(failure);
 		}
 	}
+	return next();
 });
 
 router.afterEach((to, from) => {
